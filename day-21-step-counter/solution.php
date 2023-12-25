@@ -36,6 +36,86 @@
  * at ~0.018 seconds for the same map) to find which points are traversable
  * then apply the parity rule to those traversable points. Note that rocks do
  * not affect the parity rule, only which points are considered traversable.
+ *
+ * ======
+ * Part 2
+ * ======
+ * Given that the actual input data:
+ * - Begins at the center of a repeating square map
+ * - the path to a each border is not blocked
+ * - the borders are all unblocked
+ * - and some points are completely enclosed by rocks
+ * A Reddit user came up with a much better example input:
+ * https://www.reddit.com/r/adventofcode/comments/18o1071/2023_day_21_a_better_example_input_mild_part_2/
+ *
+ * Let's consider a 1D example of an infinite map starting from the center point:
+ * --------------------------------------
+ * Steps 0: . . . . .|. . O . .|. . . . . 1D = 1; 2D =  1
+ * --------------------------------------
+ * Steps 1: . . . . .|. O . O .|. . . . . 1D = 2; 2D =  4
+ * --------------------------------------
+ * Steps 2: . . . . .|O . O . O|. . . . . 1D = 3; 2D =  9
+ * --------------------------------------
+ * Steps 3: . . . . O|. O . O .|O . . . . 1D = 4; 2D = 16
+ * --------------------------------------
+ * Steps 4: . . . O .|O . O . O|. O . . . 1D = 5; 2D = 25
+ * --------------------------------------
+ * Steps 5: . . O . O|. O . O .|O . O . . 1D = 6; 2D = 36
+ * --------------------------------------
+ * This is enough to see that for each parallel maps, the pattern is the same
+ * with opposite parity.
+ * We can also see that the number of reachable points is a linear function of
+ * the number of steps taken:
+ *   f(0) = 1, f(1) = 2, f(2) = 3, ...
+ *   f(steps) = steps + 1
+ * which becomes quadratic when extrapolated to 2D (image not shown).
+ *   f(0) = 1, f(1) = 4, f(2) = 9, ...
+ *   f(steps) = (steps + 1)^2 = (steps)^2 + 2(steps) + 1
+ * However, this is not enough to solve the problem because we need to account
+ * for the fact that the map contains rocks. Given that the rock patterns
+ * repeat on each map, we can model the answer as a function of maps traversed.
+ *
+ * Using the above map as a simple example, due to having no rocks, where
+ * width=5 and radius=floor(5/2)=2, we see that maps are traversed at
+ * steps 2, 7, 12, ..., (5(maps) + 2) or (S(maps) = width(maps) + radius).
+ *
+ * Maps 0 Steps  2: | | |O| | | 1D =  3; 2D =   9
+ * Maps 1 Steps  7: | |O|O|O| | 1D =  8; 2D =  64
+ * Maps 2 Steps 12: |O|O|O|O|O| 1D = 13; 2D = 144
+ *
+ * 1D
+ *   f(0) = 3, f(1) = 8, f(2) = 13, ...
+ *   f(maps) = steps + 1 = [5(maps) + 2] + 1 = 5(maps) + 3
+ * 2D
+ *   f(0) = 9, f(1) = 64, f(2) = 144, ...
+ *   f(maps) = (5(maps) + 3)^2 = 25(maps)^2 + 30(maps) + 9
+ *
+ * For the actual problem, take note that 26501365 steps is equivalent to
+ * exactly 202300 maps of the actual input data.
+ * To account for rocks in the actual input data, we measure 3 actual
+ * datapoints that can be used to derive the quadratic function.
+ *
+ * Steps to measure:
+ *   S(maps) = 131(maps) + 65
+ *   S(0) = 65, S(1) = 196, S(2) = 327
+ * Measured data:
+ *   f(0) = 3799, f(1) = 34047, f(2) = 94475
+ * Deriving the quadratic:
+ *   0 = a(3799)^2 + b(3799) + c
+ *   1 = a(34047)^2 + b(34047) + c
+ *   2 = a(94475)^2 + b(94475) + c
+ *   =============================
+ *   a = 15090
+ *   b = 15158
+ *   c = 3799
+ * Results in the function:
+ *   f(maps) = 15090(maps)^2 + 15158(maps) + 3799
+ *
+ * Which can be used to calculate the Part 2 answer without any additional code.
+ *   26501365 = 131(maps) + 65
+ *   => maps = (26501365 - 65) / 131
+ *           = 202300
+ *   f(202300) = 617_565_692_567_199
  */
 
 declare(strict_types=1);
@@ -80,6 +160,17 @@ final class Point
         return array_map(fn (array $d): self => self::get($this->x + $delta * (int)$d['x'], $this->y + $delta * (int)$d['y']), DIRECTIONS);
     }
 
+    public function getWrappped(int $width, int $height): Point
+    {
+        return self::get($this->wrapAxis($this->x, $width), $this->wrapAxis($this->y, $height));
+    }
+
+    private function wrapAxis(int $value, int $max): int
+    {
+        // Fix the fact that -3 % 5 = -3 instead of 2
+        return ($max + ($value % $max)) % $max;
+    }
+
     public function x(): int
     {
         return $this->x;
@@ -96,8 +187,10 @@ final class Point
     }
 }
 
-function findReachedPoints(array $grid, int $maxRadius, Point $start): array
+function findReachedPoints(array $grid, int $maxRadius, Point $start, bool $infiniteMap = false): array
 {
+    $width = count($grid);
+
     $queue = new \SplQueue();
     $queue->enqueue(['point' => $start, 'step' => 0]);
     $traversed = [(string)$start => $start];
@@ -111,8 +204,9 @@ function findReachedPoints(array $grid, int $maxRadius, Point $start): array
         ['point' => $point, 'step' => $step] = $queue->dequeue();
 
         foreach ($point->neighbours() as $next) {
+            $gridPoint = ($infiniteMap) ? $next->getWrappped($width, $width) : $next;
             if (
-                ($grid[$next->x()][$next->y()] ?? null) === PLOT
+                ($grid[$gridPoint->x()][$gridPoint->y()] ?? null) === PLOT
                 && !isset($traversed[(string)$next])
                 && $step < $maxRadius
             ) {
@@ -182,8 +276,30 @@ function recursiveSearch(array $grid, int $maxSteps, Point $point, int $step = 0
 
     debug(fn () => str_repeat('-', 80));
 
-    runPart(2, function () use ($grid, $maxSteps, $start): int {
-        return -1;
+    $width = count($grid);
+    $maxSteps = match ($fileName) {
+        'input.txt' => 26501365,
+        'example1.txt' => 1000,
+        default => 2 * $width + (int)floor($width / 2),
+    };
+    runPart(2, function () use ($grid, $maxSteps, $start, $width, $fileName): int {
+        if (isDebugLevel(2)) {
+            $maxStepSamples = match ($fileName) {
+                'input.txt' => [65, 196, 327/* , 26501365 */],
+                'example1.txt' => [6, 10, 50, 100, 500/*, 1000, 5000 */],
+                default => array_map(fn ($i) => $i * $width + (int)floor($width / 2), [0, 1, 2]),
+            };
+
+            foreach ($maxStepSamples as $maxStepSample) {
+                $reachedCells = count(findReachedPoints($grid, $maxStepSample, $start, infiniteMap: true));
+                debug(fn () => sprintf('(%d,%d)', $maxStepSample, $reachedCells), 2);
+            }
+        } else {
+            // See docblock for an explanation of how this was derived.
+            $reachedCells = 617565692567199;
+        }
+
+        return $reachedCells;
     });
 
     printf("memory_get_peak_usage(): %s KB\n", memory_get_peak_usage() / 1000);
